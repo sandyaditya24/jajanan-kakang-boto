@@ -13,7 +13,9 @@ import {
   Lock,
   LogOut,
   RotateCw,
-  ClipboardList
+  ClipboardList,
+  MessageCircle,
+  AlertCircle
 } from 'lucide-react';
 import { Header } from './components/Header';
 import { CategoryFilter } from './components/CategoryFilter';
@@ -31,31 +33,31 @@ import { formatRupiah } from './utils/format';
 import { menuApi } from './services/menuApi';
 
 const STORAGE_KEYS = {
-  MENU: 'jajanan_kakang_menu_v4',
-  MENU_MODIFIED: 'jajanan_kakang_menu_modified_v4',
-  SETTINGS: 'jajanan_kakang_settings_v4',
-  SETTINGS_MODIFIED: 'jajanan_kakang_settings_modified_v4',
-  CART: 'jajanan_kakang_cart_v4',
-  ORDERS: 'jajanan_kakang_orders_v4',
-  SELLER_AUTH: 'jajanan_seller_auth_v4',
+  MENU: 'jajanan_kakang_menu_v5',
+  MENU_MODIFIED: 'jajanan_kakang_menu_modified_v5',
+  SETTINGS: 'jajanan_kakang_settings_v5',
+  SETTINGS_MODIFIED: 'jajanan_kakang_settings_modified_v5',
+  CART: 'jajanan_kakang_cart_v5',
+  ORDERS: 'jajanan_kakang_orders_v5',
+  SELLER_AUTH: 'jajanan_seller_auth_v5',
 };
 
 export default function App() {
-  // 1. Load Menu from localStorage first (prevents resetting on refresh)
+  // 1. Load Menu: starts empty by default, reads from localStorage or server
   const [menuList, setMenuList] = useState<MenuItem[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.MENU);
-      if (saved) {
+      if (saved !== null) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch (e) {
       console.warn('Gagal membaca menu dari localStorage:', e);
     }
-    return DEFAULT_MENU;
+    return DEFAULT_MENU; // Empty array []
   });
 
-  // 2. Load Settings from localStorage first
+  // 2. Load Settings from localStorage or defaults
   const [settings, setSettings] = useState<ShopSettings>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.SETTINGS);
@@ -83,7 +85,7 @@ export default function App() {
     return [];
   });
 
-  // 4. Load Saved Orders (Daftar Pesanan) from localStorage
+  // 4. Load Saved Orders from localStorage
   const [savedOrders, setSavedOrders] = useState<SavedOrder[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.ORDERS);
@@ -185,51 +187,47 @@ export default function App() {
     }
   }, [savedOrders]);
 
-  // Real-time Database Initial Sync & Protection against Default Overwrite
+  // Real-time Database Initial Sync with Server JSON storage
   useEffect(() => {
     let isSubscribed = true;
 
-    async function initializeOnlineData() {
+    async function loadInitialServerData() {
       setIsSyncing(true);
       try {
-        const isMenuCustomized = localStorage.getItem(STORAGE_KEYS.MENU_MODIFIED) === 'true';
-        const isSettingsCustomized = localStorage.getItem(STORAGE_KEYS.SETTINGS_MODIFIED) === 'true';
+        // Fetch menu from server internal JSON database
+        const onlineMenu = await menuApi.getMenu();
+        if (isSubscribed && Array.isArray(onlineMenu)) {
+          setMenuList(onlineMenu);
+          localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(onlineMenu));
+        }
 
-        // If local user has already modified menu or settings, push local data to server
-        // so Cloud Run instance restarts will NEVER wipe out the seller's edits!
-        if (isMenuCustomized || isSettingsCustomized) {
-          const localMenu = JSON.parse(localStorage.getItem(STORAGE_KEYS.MENU) || '[]');
-          const localSettings = JSON.parse(localStorage.getItem(STORAGE_KEYS.SETTINGS) || 'null');
-          if (Array.isArray(localMenu) && localMenu.length > 0) {
-            await menuApi.syncMenu(localMenu, localSettings || undefined);
-          }
-        } else {
-          // Fresh client: load from server online database
-          const onlineMenu = await menuApi.getMenu();
-          if (isSubscribed && onlineMenu && onlineMenu.length > 0) {
-            setMenuList(onlineMenu);
-            localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(onlineMenu));
-          }
+        // Fetch settings from server
+        const onlineSettings = await menuApi.getSettings();
+        if (isSubscribed && onlineSettings) {
+          setSettings(onlineSettings);
+          localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(onlineSettings));
+        }
 
-          const onlineSettings = await menuApi.getSettings();
-          if (isSubscribed && onlineSettings) {
-            setSettings(onlineSettings);
-            localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(onlineSettings));
-          }
+        // Fetch orders from server
+        const onlineOrders = await menuApi.getOrders();
+        if (isSubscribed && Array.isArray(onlineOrders)) {
+          setSavedOrders(onlineOrders);
+          localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(onlineOrders));
         }
       } catch (err) {
-        console.warn('Network sync info, using localStorage data:', err);
+        console.warn('Gagal memuat data dari server, menggunakan cache lokal:', err);
       } finally {
         if (isSubscribed) setIsSyncing(false);
       }
     }
 
-    initializeOnlineData();
+    loadInitialServerData();
 
     // Subscribe to SSE updates from server
     const unsubscribe = menuApi.subscribeToRealtime((event) => {
       if (!isSubscribed) return;
 
+      // Handle menu updates
       if (event.menu && Array.isArray(event.menu)) {
         setMenuList(event.menu);
         localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(event.menu));
@@ -249,15 +247,48 @@ export default function App() {
         }
       }
 
+      // Handle shop settings updates
       if (event.settings) {
         setSettings(event.settings);
         localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(event.settings));
       }
+
+      // Handle order updates
+      if (event.orders && Array.isArray(event.orders)) {
+        setSavedOrders(event.orders);
+        localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(event.orders));
+      } else if (event.order && event.type === 'order:new') {
+        setSavedOrders((prev) => [
+          event.order!,
+          ...prev.filter((o) => o.id !== event.order!.id),
+        ]);
+      }
     });
+
+    // Re-sync on window focus (for mobile tab switches or background reconnection)
+    const handleFocus = async () => {
+      try {
+        const freshMenu = await menuApi.getMenu();
+        if (isSubscribed && Array.isArray(freshMenu)) {
+          setMenuList(freshMenu);
+          localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(freshMenu));
+        }
+        const freshOrders = await menuApi.getOrders();
+        if (isSubscribed && Array.isArray(freshOrders)) {
+          setSavedOrders(freshOrders);
+          localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(freshOrders));
+        }
+      } catch {
+        // silent fallback
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
 
     return () => {
       isSubscribed = false;
       unsubscribe();
+      window.removeEventListener('focus', handleFocus);
     };
   }, [showToast]);
 
@@ -330,7 +361,7 @@ export default function App() {
     showToast('Keranjang pesanan dikosongkan.');
   };
 
-  // Menu Management with LocalStorage & Online Database Sync
+  // Menu Management with Server-side JSON storage & LocalStorage
   const handleSaveMenu = async (item: MenuItem) => {
     setIsSyncing(true);
     let updatedList: MenuItem[];
@@ -343,7 +374,7 @@ export default function App() {
       showToast(`Menu baru "${item.name}" berhasil ditambahkan.`);
     }
 
-    // Immediately save to state & localStorage
+    // Immediately save to local state & localStorage
     setMenuList(updatedList);
     try {
       localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(updatedList));
@@ -352,7 +383,7 @@ export default function App() {
       console.warn('LocalStorage error:', e);
     }
 
-    // Sync with online server
+    // Persist permanently in server database.json
     try {
       if (editingItem) {
         await menuApi.updateMenu(item);
@@ -360,7 +391,7 @@ export default function App() {
         await menuApi.addMenu(item);
       }
     } catch (err) {
-      console.warn('Server sync error, data is safely saved in localStorage:', err);
+      console.warn('Server sync error, data is safely saved locally:', err);
     } finally {
       setIsSyncing(false);
       setEditingItem(null);
@@ -375,7 +406,7 @@ export default function App() {
       setIsSyncing(true);
       const updatedList = menuList.filter((m) => m.id !== id);
 
-      // Immediately save to state & localStorage
+      // Immediately save to local state & localStorage
       setMenuList(updatedList);
       setCart((prev) => prev.filter((c) => c.item.id !== id));
       try {
@@ -387,11 +418,11 @@ export default function App() {
 
       showToast(`Menu "${itemToDelete.name}" telah dihapus.`);
 
-      // Sync with server
+      // Delete from server database.json
       try {
         await menuApi.deleteMenu(id);
       } catch (err) {
-        console.warn('Server sync error, data safely updated in localStorage:', err);
+        console.warn('Server sync error, data safely updated locally:', err);
       } finally {
         setIsSyncing(false);
       }
@@ -407,7 +438,7 @@ export default function App() {
     } catch (e) {
       console.warn('LocalStorage error:', e);
     }
-    showToast('Daftar menu dikembalikan ke setelan awal.');
+    showToast('Daftar menu dikosongkan.');
 
     try {
       await menuApi.resetMenu();
@@ -431,12 +462,12 @@ export default function App() {
     try {
       await menuApi.updateSettings(newSettings);
     } catch (err) {
-      console.warn('Server sync error, settings saved in localStorage:', err);
+      console.warn('Server sync error, settings saved locally:', err);
     }
   };
 
-  // Order Completion: save to Daftar Pesanan in localStorage
-  const handleOrderSuccess = (
+  // Order Completion: save to Daftar Pesanan in state, localStorage, and server database.json
+  const handleOrderSuccess = async (
     orderId: string,
     form: OrderForm,
     orderedCart: CartItem[]
@@ -469,21 +500,40 @@ export default function App() {
     setIsCartOpen(false);
     setReceiptOpen(true);
     setCart([]);
+
+    // Save to server database.json
+    try {
+      await menuApi.addOrder(newOrder);
+    } catch (e) {
+      console.warn('Gagal menyimpan pesanan ke server:', e);
+    }
   };
 
-  const handleUpdateOrderStatus = (orderId: string, status: 'menunggu' | 'diproses' | 'selesai') => {
+  const handleUpdateOrderStatus = async (orderId: string, status: 'menunggu' | 'diproses' | 'selesai') => {
     setSavedOrders((prev) =>
       prev.map((o) => (o.id === orderId ? { ...o, status } : o))
     );
     showToast(`Status pesanan #${orderId} diperbarui.`);
+
+    try {
+      await menuApi.updateOrderStatus(orderId, status);
+    } catch (e) {
+      console.warn('Gagal memperbarui status di server:', e);
+    }
   };
 
-  const handleDeleteOrder = (orderId: string) => {
+  const handleDeleteOrder = async (orderId: string) => {
     setSavedOrders((prev) => prev.filter((o) => o.id !== orderId));
     showToast(`Pesanan #${orderId} dihapus dari riwayat.`);
+
+    try {
+      await menuApi.deleteOrder(orderId);
+    } catch (e) {
+      console.warn('Gagal menghapus pesanan di server:', e);
+    }
   };
 
-  const handleClearAllOrders = () => {
+  const handleClearAllOrders = async () => {
     setSavedOrders([]);
     try {
       localStorage.removeItem(STORAGE_KEYS.ORDERS);
@@ -491,6 +541,12 @@ export default function App() {
       // ignore
     }
     showToast('Seluruh riwayat pesanan telah dibersihkan.');
+
+    try {
+      await menuApi.clearOrders();
+    } catch (e) {
+      console.warn('Gagal membersihkan pesanan di server:', e);
+    }
   };
 
   // Filtered Menu Items
@@ -569,6 +625,7 @@ export default function App() {
                 setEditingItem(null);
                 setIsAddMenuOpen(true);
               }}
+              whatsappNumber={settings.whatsappNumber}
             />
           </div>
 
@@ -626,7 +683,7 @@ export default function App() {
                   )}
                 </h2>
                 <p className="text-xs text-amber-800">
-                  Perubahan menu dan pengaturan Anda disimpan otomatis di perangkat (localStorage) dan disinkronkan ke server.
+                  Data menu tersimpan otomatis di server internal proyek & tersinkronisasi langsung ke pembeli (#buyer).
                 </p>
               </div>
             </div>
@@ -707,8 +764,59 @@ export default function App() {
           )}
         </div>
 
-        {/* Menu Cards Grid */}
-        {filteredMenu.length === 0 ? (
+        {/* Menu Cards Grid / Empty States */}
+        {menuList.length === 0 ? (
+          /* State when menu database is empty */
+          <div className="bg-white rounded-3xl border border-stone-200/90 p-8 sm:p-12 text-center shadow-xs">
+            <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto mb-4">
+              <UtensilsCrossed className="w-8 h-8 stroke-1" />
+            </div>
+
+            {showSellerPanel ? (
+              <div className="space-y-3 max-w-md mx-auto">
+                <h3 className="text-lg font-black text-stone-900">
+                  Daftar Menu Masih Kosong
+                </h3>
+                <p className="text-xs sm:text-sm text-stone-500 leading-relaxed">
+                  Semua menu bawaan telah dibersihkan sesuai permintaan Anda. Mulai tambahkan menu jajanan pertama dengan mengunggah foto, nama, dan harga. Data akan langsung tersimpan permanen di server!
+                </p>
+                <div className="pt-2">
+                  <button
+                    onClick={() => {
+                      setEditingItem(null);
+                      setIsAddMenuOpen(true);
+                    }}
+                    className="px-6 py-3 bg-amber-600 hover:bg-amber-700 text-white font-black text-xs rounded-xl transition shadow-md inline-flex items-center gap-2 active:scale-95"
+                  >
+                    <Plus className="w-4 h-4 stroke-2" />
+                    <span>Tambah Menu Jajanan Sekarang</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3 max-w-md mx-auto">
+                <h3 className="text-lg font-black text-stone-900">
+                  Dapur Sedang Menyiapkan Menu Baru
+                </h3>
+                <p className="text-xs sm:text-sm text-stone-500 leading-relaxed">
+                  Penjual sedang memperbarui daftar jajanan favorit hari ini. Silakan kunjungi kembali beberapa saat lagi atau hubungi kami langsung via WhatsApp untuk pertanyaan pesanan.
+                </p>
+                <div className="pt-2 flex items-center justify-center gap-3">
+                  <a
+                    href={`https://wa.me/${settings.whatsappNumber}?text=${encodeURIComponent('Halo JAJANAN KAKANG, mau tanya menu jajanan yang ready?')}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition shadow inline-flex items-center gap-2"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>Hubungi Penjual via WhatsApp</span>
+                  </a>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : filteredMenu.length === 0 ? (
+          /* State when search / category filter has no match */
           <div className="bg-white rounded-3xl border border-stone-200 p-12 text-center space-y-3">
             <UtensilsCrossed className="w-12 h-12 mx-auto text-stone-300 stroke-1" />
             <h3 className="text-base font-bold text-stone-800">Tidak ada menu yang sesuai</h3>

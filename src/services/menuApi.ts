@@ -1,29 +1,30 @@
-import { MenuItem, ShopSettings } from '../types/menu';
+import { MenuItem, ShopSettings, SavedOrder } from '../types/menu';
 
 export interface ApiResponse<T> {
   success: boolean;
   data?: T;
   menu?: MenuItem[];
+  orders?: SavedOrder[];
   settings?: ShopSettings;
   error?: string;
   lastUpdated?: number;
 }
 
 export const menuApi = {
-  // Fetch menu from online database
+  // Fetch menu from internal JSON database
   async getMenu(): Promise<MenuItem[]> {
     try {
       const res = await fetch('/api/menu');
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       const json: ApiResponse<MenuItem[]> = await res.json();
-      return json.data || [];
+      return Array.isArray(json.data) ? json.data : [];
     } catch (err) {
-      console.warn('Gagal memuat menu dari server, beralih ke cache offline:', err);
+      console.warn('Gagal memuat menu dari server:', err);
       throw err;
     }
   },
 
-  // Add new menu item to online database
+  // Add new menu item to internal JSON database
   async addMenu(item: MenuItem): Promise<MenuItem[]> {
     const res = await fetch('/api/menu', {
       method: 'POST',
@@ -35,7 +36,7 @@ export const menuApi = {
     return json.menu || [];
   },
 
-  // Update existing menu item in online database
+  // Update existing menu item in internal JSON database
   async updateMenu(item: MenuItem): Promise<MenuItem[]> {
     const res = await fetch(`/api/menu/${item.id}`, {
       method: 'PUT',
@@ -47,7 +48,7 @@ export const menuApi = {
     return json.menu || [];
   },
 
-  // Delete menu item from online database
+  // Delete menu item from internal JSON database
   async deleteMenu(id: string): Promise<MenuItem[]> {
     const res = await fetch(`/api/menu/${id}`, {
       method: 'DELETE',
@@ -57,7 +58,7 @@ export const menuApi = {
     return json.menu || [];
   },
 
-  // Reset menu to defaults
+  // Reset menu to defaults (empty list)
   async resetMenu(): Promise<MenuItem[]> {
     const res = await fetch('/api/menu/reset', {
       method: 'POST',
@@ -107,9 +108,90 @@ export const menuApi = {
     return json.data || settings;
   },
 
+  // Fetch orders from server
+  async getOrders(): Promise<SavedOrder[]> {
+    try {
+      const res = await fetch('/api/orders');
+      if (!res.ok) return [];
+      const json: ApiResponse<SavedOrder[]> = await res.json();
+      return Array.isArray(json.data) ? json.data : [];
+    } catch {
+      return [];
+    }
+  },
+
+  // Add new order to server
+  async addOrder(order: SavedOrder): Promise<SavedOrder[]> {
+    try {
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(order),
+      });
+      if (!res.ok) return [order];
+      const json: ApiResponse<SavedOrder> = await res.json();
+      return json.orders || [order];
+    } catch (err) {
+      console.warn('Gagal menyimpan pesanan ke server:', err);
+      return [order];
+    }
+  },
+
+  // Update order status on server
+  async updateOrderStatus(id: string, status: 'menunggu' | 'diproses' | 'selesai'): Promise<SavedOrder[]> {
+    try {
+      const res = await fetch(`/api/orders/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) return [];
+      const json: ApiResponse<SavedOrder> = await res.json();
+      return json.orders || [];
+    } catch {
+      return [];
+    }
+  },
+
+  // Delete order from server
+  async deleteOrder(id: string): Promise<SavedOrder[]> {
+    try {
+      const res = await fetch(`/api/orders/${id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) return [];
+      const json: ApiResponse<void> = await res.json();
+      return json.orders || [];
+    } catch {
+      return [];
+    }
+  },
+
+  // Clear all orders from server
+  async clearOrders(): Promise<SavedOrder[]> {
+    try {
+      const res = await fetch('/api/orders', {
+        method: 'DELETE',
+      });
+      if (!res.ok) return [];
+      const json: ApiResponse<void> = await res.json();
+      return json.orders || [];
+    } catch {
+      return [];
+    }
+  },
+
   // Subscribe to real-time updates via Server-Sent Events (SSE)
   subscribeToRealtime(
-    onData: (eventData: { type: string; menu?: MenuItem[]; settings?: ShopSettings }) => void,
+    onData: (eventData: {
+      type: string;
+      menu?: MenuItem[];
+      orders?: SavedOrder[];
+      settings?: ShopSettings;
+      order?: SavedOrder;
+      id?: string;
+      status?: 'menunggu' | 'diproses' | 'selesai';
+    }) => void,
     onStatusChange?: (isConnected: boolean) => void
   ): () => void {
     let eventSource: EventSource | null = null;

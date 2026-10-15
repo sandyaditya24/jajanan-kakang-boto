@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Upload, Sparkles, Image as ImageIcon } from 'lucide-react';
+import { X, Upload, Sparkles, Image as ImageIcon, Link as LinkIcon } from 'lucide-react';
 import { MenuItem, MenuCategory } from '../types/menu';
 
 interface AddMenuModalProps {
@@ -46,7 +46,7 @@ export const AddMenuModal: React.FC<AddMenuModalProps> = ({
       setCategory('gurih');
       setDescription('');
       setBadge('');
-      setImageUrl(PRESET_IMAGES[0].url);
+      setImageUrl('');
       setIsAvailable(true);
     }
     setErrorMessage('');
@@ -65,6 +65,7 @@ export const AddMenuModal: React.FC<AddMenuModalProps> = ({
       reader.onload = (event) => {
         if (event.target?.result) {
           setImageUrl(event.target.result as string);
+          setErrorMessage('');
         }
       };
       reader.readAsDataURL(file);
@@ -83,7 +84,7 @@ export const AddMenuModal: React.FC<AddMenuModalProps> = ({
       return;
     }
     if (!imageUrl) {
-      setErrorMessage('Pilih atau unggah foto makanan terlebih dahulu.');
+      setErrorMessage('Silakan upload foto atau tempel URL foto makanan terlebih dahulu.');
       return;
     }
 
@@ -115,7 +116,7 @@ export const AddMenuModal: React.FC<AddMenuModalProps> = ({
                 {editingItem ? 'Edit Menu Jajanan' : 'Tambah Menu Baru'}
               </h2>
               <p className="text-xs text-stone-500 mt-0.5">
-                Isi rincian jajanan untuk ditampilkan di daftar menu
+                Isi rincian jajanan untuk ditampilkan di daftar menu pembeli
               </p>
             </div>
             <button
@@ -137,9 +138,9 @@ export const AddMenuModal: React.FC<AddMenuModalProps> = ({
             {/* Image Preview & Upload */}
             <div>
               <label className="block text-xs font-semibold text-stone-700 mb-1.5">
-                Foto Makanan
+                Foto Makanan <span className="text-red-500">*</span>
               </label>
-              <div className="flex items-center gap-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
                 <div className="w-24 h-24 rounded-xl border border-stone-200 overflow-hidden bg-stone-100 shrink-0">
                   {imageUrl ? (
                     <img
@@ -149,17 +150,17 @@ export const AddMenuModal: React.FC<AddMenuModalProps> = ({
                       referrerPolicy="no-referrer"
                     />
                   ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center text-stone-400">
+                    <div className="w-full h-full flex flex-col items-center justify-center text-stone-400 p-2 text-center">
                       <ImageIcon className="w-6 h-6 mb-1 text-stone-300" />
-                      <span className="text-[10px]">Belum ada</span>
+                      <span className="text-[10px]">Belum ada foto</span>
                     </div>
                   )}
                 </div>
 
-                <div className="flex-1 space-y-2">
+                <div className="flex-1 w-full space-y-2">
                   <label className="flex items-center justify-center gap-2 px-3 py-2 border border-stone-300 rounded-xl text-xs font-medium text-stone-700 hover:bg-stone-50 cursor-pointer transition">
                     <Upload className="w-4 h-4 text-amber-600" />
-                    <span>Upload Foto dari Perangkat</span>
+                    <span>Upload Foto dari Galeri / Kamera</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -168,8 +169,23 @@ export const AddMenuModal: React.FC<AddMenuModalProps> = ({
                     />
                   </label>
 
+                  {/* URL Input option */}
+                  <div className="flex items-center gap-1.5">
+                    <div className="relative flex-1">
+                      <input
+                        type="url"
+                        value={imageUrl.startsWith('data:') ? '' : imageUrl}
+                        onChange={(e) => setImageUrl(e.target.value)}
+                        placeholder="Atau tempel URL gambar (https://...)"
+                        className="w-full pl-7 pr-3 py-1.5 text-xs bg-stone-50 border border-stone-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                      <LinkIcon className="w-3.5 h-3.5 text-stone-400 absolute left-2 top-1/2 -translate-y-1/2" />
+                    </div>
+                  </div>
+
+                  {/* Preset photo options */}
                   <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-                    <span className="text-[10px] text-stone-400 shrink-0">Pilihan Cepat:</span>
+                    <span className="text-[10px] text-stone-400 shrink-0">Foto Bawaan:</span>
                     {PRESET_IMAGES.map((p, idx) => (
                       <button
                         type="button"

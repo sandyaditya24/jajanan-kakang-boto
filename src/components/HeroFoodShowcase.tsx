@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Minus, ShoppingBag, Sparkles } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Minus, Sparkles, Utensils, MessageCircle } from 'lucide-react';
 import { MenuItem, CartItem } from '../types/menu';
 import { formatRupiah } from '../utils/format';
 
@@ -9,6 +9,7 @@ interface HeroFoodShowcaseProps {
   onUpdateQuantity: (id: string, delta: number) => void;
   showSellerPanel: boolean;
   onOpenAddMenu: () => void;
+  whatsappNumber?: string;
 }
 
 export const HeroFoodShowcase: React.FC<HeroFoodShowcaseProps> = ({
@@ -17,6 +18,7 @@ export const HeroFoodShowcase: React.FC<HeroFoodShowcaseProps> = ({
   onUpdateQuantity,
   showSellerPanel,
   onOpenAddMenu,
+  whatsappNumber,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -34,16 +36,53 @@ export const HeroFoodShowcase: React.FC<HeroFoodShowcaseProps> = ({
 
   if (items.length === 0) {
     return (
-      <div className="bg-amber-900/30 rounded-3xl p-8 border border-amber-500/30 text-center text-amber-200">
-        <p className="text-sm font-semibold">Belum ada makanan yang diunggah.</p>
-        {showSellerPanel && (
-          <button
-            onClick={onOpenAddMenu}
-            className="mt-3 px-4 py-2 bg-amber-400 text-stone-950 rounded-xl text-xs font-bold"
-          >
-            Upload Menu Pertama
-          </button>
-        )}
+      <div className="bg-amber-900/40 border border-amber-400/30 rounded-3xl p-6 sm:p-8 backdrop-blur-md shadow-2xl relative overflow-hidden text-white">
+        <div className="flex flex-col sm:flex-row items-center gap-6">
+          <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl bg-gradient-to-br from-amber-500/30 to-amber-600/10 border border-amber-400/40 flex items-center justify-center shrink-0 shadow-inner">
+            <Utensils className="w-10 h-10 sm:w-12 sm:h-12 text-amber-200 stroke-1 animate-pulse" />
+          </div>
+
+          <div className="space-y-2 text-center sm:text-left flex-1">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 text-amber-200 border border-amber-400/30 text-xs font-bold">
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>{showSellerPanel ? 'Mode Penjual Aktif' : 'Selamat Datang di JAJANAN KAKANG'}</span>
+            </div>
+
+            <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+              {showSellerPanel ? 'Daftar Menu Siap Ditambahkan' : 'Menu Lezat Sedang Disiapkan'}
+            </h2>
+
+            <p className="text-xs sm:text-sm text-amber-100/90 leading-relaxed max-w-xl">
+              {showSellerPanel
+                ? 'Database internal siap digunakan! Klik tombol di bawah untuk mengunggah foto makanan, nama, dan harga menu pertama Anda. Data akan tersimpan permanen dan langsung tersinkronisasi ke pembeli.'
+                : 'Penjual sedang memperbarui daftar jajanan favorit. Jajanan gurih, renyah, dan manis siap diantar hangat ke lokasimu! Silakan hubungi penjual langsung via WhatsApp untuk pertanyaan pesanan.'}
+            </p>
+
+            <div className="pt-2 flex flex-wrap items-center justify-center sm:justify-start gap-3">
+              {showSellerPanel ? (
+                <button
+                  onClick={onOpenAddMenu}
+                  className="px-5 py-2.5 bg-amber-400 hover:bg-amber-300 text-stone-950 rounded-xl text-xs font-black transition shadow-lg flex items-center gap-2 active:scale-95"
+                >
+                  <Plus className="w-4 h-4 stroke-2" />
+                  <span>Tambah Menu Pertama Sekarang</span>
+                </button>
+              ) : (
+                whatsappNumber && (
+                  <a
+                    href={`https://wa.me/${whatsappNumber}?text=${encodeURIComponent('Halo JAJANAN KAKANG, saya ingin tanya menu jajanan yang ready hari ini?')}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black transition shadow-lg flex items-center gap-2 active:scale-95"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>Chat WhatsApp Penjual</span>
+                  </a>
+                )
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -79,7 +118,7 @@ export const HeroFoodShowcase: React.FC<HeroFoodShowcaseProps> = ({
               src={currentItem.image}
               alt={currentItem.name}
               referrerPolicy="no-referrer"
-              className="w-full h-full object-cover transition-all duration-700 hover:scale-105 animate-fadeIn"
+              className="w-full h-full object-cover transition-all duration-700 hover:scale-105"
             />
 
             {/* Quality / Promo Badge */}

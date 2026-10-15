@@ -5,7 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { DEFAULT_MENU, DEFAULT_SETTINGS } from './src/data/defaultMenu.ts';
-import type { MenuItem, ShopSettings } from './src/types/menu.ts';
+import type { MenuItem, ShopSettings, SavedOrder } from './src/types/menu.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,7 +16,7 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 // High payload limit for image data URLs
 app.use(express.json({ limit: '15mb' }));
 
-// Database storage file path
+// Database storage file path inside the project repository
 const DATA_DIR = path.resolve(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -25,26 +25,33 @@ const DB_FILE = path.join(DATA_DIR, 'database.json');
 
 interface DatabaseSchema {
   menu: MenuItem[];
+  orders: SavedOrder[];
   settings: ShopSettings;
   lastUpdated: number;
 }
 
-// Initialize database with default menu if not present
+// Initialize database from file or defaults
 function loadDatabase(): DatabaseSchema {
   try {
     if (fs.existsSync(DB_FILE)) {
       const content = fs.readFileSync(DB_FILE, 'utf-8');
       const parsed = JSON.parse(content);
-      if (Array.isArray(parsed.menu) && parsed.menu.length > 0) {
-        return parsed;
+      if (Array.isArray(parsed.menu)) {
+        return {
+          menu: parsed.menu,
+          orders: Array.isArray(parsed.orders) ? parsed.orders : [],
+          settings: parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : DEFAULT_SETTINGS,
+          lastUpdated: parsed.lastUpdated || Date.now(),
+        };
       }
     }
   } catch (err) {
-    console.error('Error reading database file, resetting to defaults:', err);
+    console.error('Error reading database file:', err);
   }
 
   const initialData: DatabaseSchema = {
-    menu: DEFAULT_MENU,
+    menu: DEFAULT_MENU, // default is empty []
+    orders: [],
     settings: DEFAULT_SETTINGS,
     lastUpdated: Date.now(),
   };
@@ -113,8 +120,16 @@ app.get('/api/menu/stream', (req: Request, res: Response) => {
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
 
-  // Send initial data snapshot
-  res.write(`data: ${JSON.stringify({ type: 'init', menu: db.menu, settings: db.settings, lastUpdated: db.lastUpdated })}\n\n`);
+  // Send initial data snapshot to newly connected client
+  res.write(
+    `data: ${JSON.stringify({
+      type: 'init',
+      menu: db.menu,
+      orders: db.orders,
+      settings: db.settings,
+      lastUpdated: db.lastUpdated,
+    })}\n\n`
+  );
 
   sseClients.add(res);
 
@@ -199,9 +214,9 @@ app.delete('/api/menu/:id', (req: Request, res: Response) => {
   res.json({ success: true, id, menu: db.menu });
 });
 
-// 6. Reset menu to defaults
+// 6. Reset menu to defaults (empty list)
 app.post('/api/menu/reset', (req: Request, res: Response) => {
-  db.menu = DEFAULT_MENU;
+  db.menu = [];
   saveDatabase(db);
 
   broadcast({
@@ -219,7 +234,7 @@ app.post('/api/menu/sync', (req: Request, res: Response) => {
   const { menu, settings, clientUpdated } = req.body;
   let changed = false;
 
-  if (Array.isArray(menu) && menu.length > 0) {
+  if (Array.isArray(menu)) {
     db.menu = menu;
     changed = true;
   }
@@ -260,6 +275,73 @@ app.put('/api/settings', (req: Request, res: Response) => {
   });
 
   res.json({ success: true, data: db.settings });
+});
+
+// 9. Orders API (Daftar Riwayat Pesanan)
+app.get('/api/orders', (req: Request, res: Response) => {
+  res.json({ success: true, data: db.orders || [] });
+});
+
+app.post('/api/orders', (req: Request, res: Response) => {
+  const order: SavedOrder = req.body;
+  if (!order || !order.id) {
+    res.status(400).json({ success: false, error: 'Data pesanan tidak valid' });
+    return;
+  }
+
+  db.orders = [order, ...(db.orders || []).filter((o) => o.id !== order.id)];
+  saveDatabase(db);
+
+  broadcast({
+    type: 'order:new',
+    order,
+    orders: db.orders,
+  });
+
+  res.json({ success: true, data: order, orders: db.orders });
+});
+
+app.put('/api/orders/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { status } = req.body;
+
+  db.orders = (db.orders || []).map((o) => (o.id === id ? { ...o, status } : o));
+  saveDatabase(db);
+
+  broadcast({
+    type: 'order:updated',
+    id,
+    status,
+    orders: db.orders,
+  });
+
+  res.json({ success: true, orders: db.orders });
+});
+
+app.delete('/api/orders/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  db.orders = (db.orders || []).filter((o) => o.id !== id);
+  saveDatabase(db);
+
+  broadcast({
+    type: 'order:deleted',
+    id,
+    orders: db.orders,
+  });
+
+  res.json({ success: true, orders: db.orders });
+});
+
+app.delete('/api/orders', (req: Request, res: Response) => {
+  db.orders = [];
+  saveDatabase(db);
+
+  broadcast({
+    type: 'order:cleared',
+    orders: [],
+  });
+
+  res.json({ success: true, orders: [] });
 });
 
 // --- VITE MIDDLEWARE / STATIC ASSETS ---
