@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShoppingBag, Settings, Plus, UtensilsCrossed, LogOut, ShieldAlert } from 'lucide-react';
+import { ShoppingBag, Settings, Plus, UtensilsCrossed, LogOut, ClipboardList } from 'lucide-react';
 import { formatRupiah } from '../utils/format';
 import { ShopSettings } from '../types/menu';
 
@@ -7,7 +7,9 @@ interface HeaderProps {
   settings: ShopSettings;
   cartCount: number;
   cartTotal: number;
+  orderCount: number;
   onOpenCart: () => void;
+  onOpenOrders: () => void;
   onOpenSettings: () => void;
   onOpenAddMenu: () => void;
   isBuyerMode: boolean;
@@ -19,7 +21,9 @@ export const Header: React.FC<HeaderProps> = ({
   settings,
   cartCount,
   cartTotal,
+  orderCount,
   onOpenCart,
+  onOpenOrders,
   onOpenSettings,
   onOpenAddMenu,
   isBuyerMode,
@@ -74,8 +78,23 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </nav>
 
-        {/* Zone 3: Actions (Seller Add Menu / Settings, and Cart Button) */}
+        {/* Zone 3: Actions (Daftar Pesanan, Seller Add Menu / Settings, and Cart Button) */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          {/* Daftar Pesanan Button */}
+          <button
+            onClick={onOpenOrders}
+            className="p-2 text-amber-200 hover:text-white hover:bg-amber-800/60 rounded-xl transition-colors relative"
+            title="Daftar Riwayat Pesanan"
+            aria-label="Daftar Riwayat Pesanan"
+          >
+            <ClipboardList className="w-5 h-5" />
+            {orderCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-amber-400 text-stone-950 text-[10px] w-4 h-4 rounded-full font-black flex items-center justify-center">
+                {orderCount > 9 ? '9+' : orderCount}
+              </span>
+            )}
+          </button>
+
           {showAdminControls && (
             <>
               <button

@@ -214,6 +214,35 @@ app.post('/api/menu/reset', (req: Request, res: Response) => {
   res.json({ success: true, menu: db.menu });
 });
 
+// 6b. Sync client menu and settings
+app.post('/api/menu/sync', (req: Request, res: Response) => {
+  const { menu, settings, clientUpdated } = req.body;
+  let changed = false;
+
+  if (Array.isArray(menu) && menu.length > 0) {
+    db.menu = menu;
+    changed = true;
+  }
+  if (settings && typeof settings === 'object') {
+    db.settings = { ...db.settings, ...settings };
+    changed = true;
+  }
+
+  if (changed) {
+    db.lastUpdated = clientUpdated || Date.now();
+    saveDatabase(db);
+    broadcast({
+      type: 'menu:updated',
+      action: 'sync',
+      menu: db.menu,
+      settings: db.settings,
+      lastUpdated: db.lastUpdated,
+    });
+  }
+
+  res.json({ success: true, menu: db.menu, settings: db.settings, lastUpdated: db.lastUpdated });
+});
+
 // 7. Get shop settings
 app.get('/api/settings', (req: Request, res: Response) => {
   res.json({ success: true, data: db.settings });

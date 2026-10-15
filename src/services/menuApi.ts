@@ -67,6 +67,22 @@ export const menuApi = {
     return json.menu || [];
   },
 
+  // Sync client menu & settings to server
+  async syncMenu(menu: MenuItem[], settings?: ShopSettings, clientUpdated?: number): Promise<MenuItem[]> {
+    try {
+      const res = await fetch('/api/menu/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ menu, settings, clientUpdated }),
+      });
+      if (!res.ok) return menu;
+      const json: ApiResponse<MenuItem[]> = await res.json();
+      return json.menu || menu;
+    } catch {
+      return menu;
+    }
+  },
+
   // Fetch shop settings
   async getSettings(): Promise<ShopSettings | null> {
     try {

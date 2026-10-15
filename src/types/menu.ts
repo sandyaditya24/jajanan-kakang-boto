@@ -30,6 +30,16 @@ export interface OrderForm {
   selectedBank?: 'BRI' | 'BCA' | 'BNI';
 }
 
+export interface SavedOrder {
+  id: string;
+  timestamp: number;
+  dateFormatted: string;
+  form: OrderForm;
+  items: CartItem[];
+  total: number;
+  status: 'menunggu' | 'diproses' | 'selesai';
+}
+
 export interface ShopSettings {
   whatsappNumber: string;
   shopName: string;

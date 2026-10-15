@@ -12,7 +12,8 @@ import {
   Plus,
   Lock,
   LogOut,
-  RotateCw
+  RotateCw,
+  ClipboardList
 } from 'lucide-react';
 import { Header } from './components/Header';
 import { CategoryFilter } from './components/CategoryFilter';
@@ -21,61 +22,85 @@ import { CartDrawer } from './components/CartDrawer';
 import { AddMenuModal } from './components/AddMenuModal';
 import { SettingsModal } from './components/SettingsModal';
 import { ReceiptModal } from './components/ReceiptModal';
+import { OrdersModal } from './components/OrdersModal';
 import { PinModal } from './components/PinModal';
 import { HeroFoodShowcase } from './components/HeroFoodShowcase';
-import { MenuItem, MenuCategory, CartItem, ShopSettings, OrderForm } from './types/menu';
+import { MenuItem, MenuCategory, CartItem, ShopSettings, OrderForm, SavedOrder } from './types/menu';
 import { DEFAULT_MENU, DEFAULT_SETTINGS } from './data/defaultMenu';
 import { formatRupiah } from './utils/format';
 import { menuApi } from './services/menuApi';
 
 const STORAGE_KEYS = {
-  MENU_CACHE: 'jajanan_kakang_menu_cache_v3',
-  SETTINGS_CACHE: 'jajanan_kakang_settings_cache_v3',
-  CART: 'jajanan_kakang_cart_v3',
-  SELLER_AUTH: 'jajanan_seller_auth_v3',
+  MENU: 'jajanan_kakang_menu_v4',
+  MENU_MODIFIED: 'jajanan_kakang_menu_modified_v4',
+  SETTINGS: 'jajanan_kakang_settings_v4',
+  SETTINGS_MODIFIED: 'jajanan_kakang_settings_modified_v4',
+  CART: 'jajanan_kakang_cart_v4',
+  ORDERS: 'jajanan_kakang_orders_v4',
+  SELLER_AUTH: 'jajanan_seller_auth_v4',
 };
 
 export default function App() {
-  // Load Menu with offline cache fallback, then sync with online DB
+  // 1. Load Menu from localStorage first (prevents resetting on refresh)
   const [menuList, setMenuList] = useState<MenuItem[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.MENU_CACHE);
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
+      const saved = localStorage.getItem(STORAGE_KEYS.MENU);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.warn('Gagal membaca menu dari localStorage:', e);
     }
     return DEFAULT_MENU;
   });
 
-  // Load Settings with offline cache fallback, then sync with online DB
+  // 2. Load Settings from localStorage first
   const [settings, setSettings] = useState<ShopSettings>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.SETTINGS_CACHE);
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
+      const saved = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch (e) {
+      console.warn('Gagal membaca pengaturan dari localStorage:', e);
     }
     return DEFAULT_SETTINGS;
   });
 
-  // Real-time Cloud Connection status
-  const [isOnlineSync, setIsOnlineSync] = useState<boolean>(true);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
-
-  // Load Cart from localStorage
+  // 3. Load Cart from localStorage
   const [cart, setCart] = useState<CartItem[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.CART);
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.warn('Gagal membaca keranjang dari localStorage:', e);
     }
     return [];
   });
 
+  // 4. Load Saved Orders (Daftar Pesanan) from localStorage
+  const [savedOrders, setSavedOrders] = useState<SavedOrder[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.ORDERS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.warn('Gagal membaca riwayat pesanan dari localStorage:', e);
+    }
+    return [];
+  });
+
+  // State synchronization indicator
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
   // Security & Mode Access State
-  // Rule 1: If URL has #buyer, enter buyer mode directly without PIN.
-  // Rule 2: If #seller or no #buyer, require PIN (132414).
   const [isBuyerMode, setIsBuyerMode] = useState<boolean>(() => {
     return window.location.hash.toLowerCase().includes('buyer');
   });
@@ -97,6 +122,7 @@ export default function App() {
 
   // Modals & Drawers
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isOrdersOpen, setIsOrdersOpen] = useState(false);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
@@ -112,7 +138,7 @@ export default function App() {
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
+    setTimeout(() => setToastMessage(null), 3000);
   }, []);
 
   // Monitor URL Hash Changes
@@ -141,77 +167,7 @@ export default function App() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  // Real-time Database Initial Fetch & SSE Subscription
-  useEffect(() => {
-    let isSubscribed = true;
-
-    // 1. Fetch initial menu from online database
-    async function loadInitialOnlineData() {
-      setIsSyncing(true);
-      try {
-        const onlineMenu = await menuApi.getMenu();
-        if (isSubscribed && onlineMenu && onlineMenu.length > 0) {
-          setMenuList(onlineMenu);
-          localStorage.setItem(STORAGE_KEYS.MENU_CACHE, JSON.stringify(onlineMenu));
-        }
-
-        const onlineSettings = await menuApi.getSettings();
-        if (isSubscribed && onlineSettings) {
-          setSettings(onlineSettings);
-          localStorage.setItem(STORAGE_KEYS.SETTINGS_CACHE, JSON.stringify(onlineSettings));
-        }
-      } catch (err) {
-        console.warn('Gagal menghubungi online database, menggunakan data lokal:', err);
-      } finally {
-        if (isSubscribed) setIsSyncing(false);
-      }
-    }
-
-    loadInitialOnlineData();
-
-    // 2. Subscribe to real-time events from server
-    const unsubscribe = menuApi.subscribeToRealtime(
-      (event) => {
-        if (!isSubscribed) return;
-
-        if (event.menu && Array.isArray(event.menu)) {
-          setMenuList(event.menu);
-          localStorage.setItem(STORAGE_KEYS.MENU_CACHE, JSON.stringify(event.menu));
-
-          // Reconcile cart if any item price or name changed
-          setCart((prevCart) =>
-            prevCart
-              .map((c) => {
-                const latest = event.menu?.find((m) => m.id === c.item.id);
-                return latest ? { ...c, item: latest } : c;
-              })
-              .filter((c) => event.menu?.some((m) => m.id === c.item.id))
-          );
-
-          if (event.type === 'menu:updated') {
-            showToast('⚡ Menu diperbarui secara real-time!');
-          }
-        }
-
-        if (event.settings) {
-          setSettings(event.settings);
-          localStorage.setItem(STORAGE_KEYS.SETTINGS_CACHE, JSON.stringify(event.settings));
-        }
-      },
-      (connected) => {
-        if (isSubscribed) {
-          setIsOnlineSync(connected);
-        }
-      }
-    );
-
-    return () => {
-      isSubscribed = false;
-      unsubscribe();
-    };
-  }, [showToast]);
-
-  // Persist cart changes
+  // Persist Cart to localStorage
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.CART, JSON.stringify(cart));
@@ -219,6 +175,91 @@ export default function App() {
       // ignore
     }
   }, [cart]);
+
+  // Persist Saved Orders to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(savedOrders));
+    } catch {
+      // ignore
+    }
+  }, [savedOrders]);
+
+  // Real-time Database Initial Sync & Protection against Default Overwrite
+  useEffect(() => {
+    let isSubscribed = true;
+
+    async function initializeOnlineData() {
+      setIsSyncing(true);
+      try {
+        const isMenuCustomized = localStorage.getItem(STORAGE_KEYS.MENU_MODIFIED) === 'true';
+        const isSettingsCustomized = localStorage.getItem(STORAGE_KEYS.SETTINGS_MODIFIED) === 'true';
+
+        // If local user has already modified menu or settings, push local data to server
+        // so Cloud Run instance restarts will NEVER wipe out the seller's edits!
+        if (isMenuCustomized || isSettingsCustomized) {
+          const localMenu = JSON.parse(localStorage.getItem(STORAGE_KEYS.MENU) || '[]');
+          const localSettings = JSON.parse(localStorage.getItem(STORAGE_KEYS.SETTINGS) || 'null');
+          if (Array.isArray(localMenu) && localMenu.length > 0) {
+            await menuApi.syncMenu(localMenu, localSettings || undefined);
+          }
+        } else {
+          // Fresh client: load from server online database
+          const onlineMenu = await menuApi.getMenu();
+          if (isSubscribed && onlineMenu && onlineMenu.length > 0) {
+            setMenuList(onlineMenu);
+            localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(onlineMenu));
+          }
+
+          const onlineSettings = await menuApi.getSettings();
+          if (isSubscribed && onlineSettings) {
+            setSettings(onlineSettings);
+            localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(onlineSettings));
+          }
+        }
+      } catch (err) {
+        console.warn('Network sync info, using localStorage data:', err);
+      } finally {
+        if (isSubscribed) setIsSyncing(false);
+      }
+    }
+
+    initializeOnlineData();
+
+    // Subscribe to SSE updates from server
+    const unsubscribe = menuApi.subscribeToRealtime((event) => {
+      if (!isSubscribed) return;
+
+      if (event.menu && Array.isArray(event.menu)) {
+        setMenuList(event.menu);
+        localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(event.menu));
+
+        // Reconcile active cart items with latest prices/availability
+        setCart((prevCart) =>
+          prevCart
+            .map((c) => {
+              const latest = event.menu?.find((m) => m.id === c.item.id);
+              return latest ? { ...c, item: latest } : c;
+            })
+            .filter((c) => event.menu?.some((m) => m.id === c.item.id))
+        );
+
+        if (event.type === 'menu:updated') {
+          showToast('Menu jajanan diperbarui');
+        }
+      }
+
+      if (event.settings) {
+        setSettings(event.settings);
+        localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(event.settings));
+      }
+    });
+
+    return () => {
+      isSubscribed = false;
+      unsubscribe();
+    };
+  }, [showToast]);
 
   // Handle PIN success
   const handlePinSuccess = () => {
@@ -289,28 +330,37 @@ export default function App() {
     showToast('Keranjang pesanan dikosongkan.');
   };
 
-  // Menu Management with Online Real-time Database
+  // Menu Management with LocalStorage & Online Database Sync
   const handleSaveMenu = async (item: MenuItem) => {
     setIsSyncing(true);
+    let updatedList: MenuItem[];
+
+    if (editingItem) {
+      updatedList = menuList.map((m) => (m.id === item.id ? item : m));
+      showToast(`Menu "${item.name}" berhasil diperbarui.`);
+    } else {
+      updatedList = [item, ...menuList];
+      showToast(`Menu baru "${item.name}" berhasil ditambahkan.`);
+    }
+
+    // Immediately save to state & localStorage
+    setMenuList(updatedList);
+    try {
+      localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(updatedList));
+      localStorage.setItem(STORAGE_KEYS.MENU_MODIFIED, 'true');
+    } catch (e) {
+      console.warn('LocalStorage error:', e);
+    }
+
+    // Sync with online server
     try {
       if (editingItem) {
-        const updated = await menuApi.updateMenu(item);
-        setMenuList(updated);
-        showToast(`Menu "${item.name}" berhasil diperbarui ke database online.`);
+        await menuApi.updateMenu(item);
       } else {
-        const updated = await menuApi.addMenu(item);
-        setMenuList(updated);
-        showToast(`Menu baru "${item.name}" berhasil tersimpan dan live ke semua pembeli.`);
+        await menuApi.addMenu(item);
       }
     } catch (err) {
-      console.error(err);
-      // Optimistic update locally
-      if (editingItem) {
-        setMenuList((prev) => prev.map((m) => (m.id === item.id ? item : m)));
-      } else {
-        setMenuList((prev) => [item, ...prev]);
-      }
-      showToast('Menu tersimpan secara lokal. Akan disinkronkan saat terhubung kembali.');
+      console.warn('Server sync error, data is safely saved in localStorage:', err);
     } finally {
       setIsSyncing(false);
       setEditingItem(null);
@@ -321,18 +371,27 @@ export default function App() {
     const itemToDelete = menuList.find((m) => m.id === id);
     if (!itemToDelete) return;
 
-    if (confirm(`Hapus jajanan "${itemToDelete.name}" dari menu online?`)) {
+    if (confirm(`Hapus jajanan "${itemToDelete.name}" dari menu?`)) {
       setIsSyncing(true);
+      const updatedList = menuList.filter((m) => m.id !== id);
+
+      // Immediately save to state & localStorage
+      setMenuList(updatedList);
+      setCart((prev) => prev.filter((c) => c.item.id !== id));
       try {
-        const updated = await menuApi.deleteMenu(id);
-        setMenuList(updated);
-        setCart((prev) => prev.filter((c) => c.item.id !== id));
-        showToast(`Menu "${itemToDelete.name}" dihapus dari database online.`);
+        localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(updatedList));
+        localStorage.setItem(STORAGE_KEYS.MENU_MODIFIED, 'true');
+      } catch (e) {
+        console.warn('LocalStorage error:', e);
+      }
+
+      showToast(`Menu "${itemToDelete.name}" telah dihapus.`);
+
+      // Sync with server
+      try {
+        await menuApi.deleteMenu(id);
       } catch (err) {
-        console.error(err);
-        setMenuList((prev) => prev.filter((m) => m.id !== id));
-        setCart((prev) => prev.filter((c) => c.item.id !== id));
-        showToast(`Menu "${itemToDelete.name}" dihapus secara lokal.`);
+        console.warn('Server sync error, data safely updated in localStorage:', err);
       } finally {
         setIsSyncing(false);
       }
@@ -341,41 +400,97 @@ export default function App() {
 
   const handleResetMenu = async () => {
     setIsSyncing(true);
+    setMenuList(DEFAULT_MENU);
     try {
-      const updated = await menuApi.resetMenu();
-      setMenuList(updated);
-      showToast('Daftar menu online telah di-reset ke data bawaan.');
+      localStorage.setItem(STORAGE_KEYS.MENU, JSON.stringify(DEFAULT_MENU));
+      localStorage.removeItem(STORAGE_KEYS.MENU_MODIFIED);
+    } catch (e) {
+      console.warn('LocalStorage error:', e);
+    }
+    showToast('Daftar menu dikembalikan ke setelan awal.');
+
+    try {
+      await menuApi.resetMenu();
     } catch (err) {
-      console.error(err);
-      setMenuList(DEFAULT_MENU);
-      showToast('Daftar menu di-reset secara lokal.');
+      console.warn('Server sync error:', err);
     } finally {
       setIsSyncing(false);
     }
   };
 
   const handleSaveSettings = async (newSettings: ShopSettings) => {
+    setSettings(newSettings);
     try {
-      const updated = await menuApi.updateSettings(newSettings);
-      setSettings(updated);
-      showToast('Pengaturan toko berhasil diperbarui ke database online.');
-    } catch {
-      setSettings(newSettings);
-      showToast('Pengaturan toko disimpan secara lokal.');
+      localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(newSettings));
+      localStorage.setItem(STORAGE_KEYS.SETTINGS_MODIFIED, 'true');
+    } catch (e) {
+      console.warn('LocalStorage error:', e);
+    }
+    showToast('Pengaturan toko berhasil disimpan.');
+
+    try {
+      await menuApi.updateSettings(newSettings);
+    } catch (err) {
+      console.warn('Server sync error, settings saved in localStorage:', err);
     }
   };
 
+  // Order Completion: save to Daftar Pesanan in localStorage
   const handleOrderSuccess = (
     orderId: string,
     form: OrderForm,
     orderedCart: CartItem[]
   ) => {
+    const now = new Date();
+    const dateFormatted = now.toLocaleDateString('id-ID', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const newOrder: SavedOrder = {
+      id: orderId,
+      timestamp: Date.now(),
+      dateFormatted,
+      form,
+      items: [...orderedCart],
+      total: orderedCart.reduce((sum, item) => sum + item.item.price * item.quantity, 0),
+      status: 'menunggu',
+    };
+
+    // Save to orders list in state & localStorage
+    setSavedOrders((prev) => [newOrder, ...prev]);
+
     setLastOrderId(orderId);
     setLastOrderForm(form);
     setLastOrderedItems([...orderedCart]);
     setIsCartOpen(false);
     setReceiptOpen(true);
     setCart([]);
+  };
+
+  const handleUpdateOrderStatus = (orderId: string, status: 'menunggu' | 'diproses' | 'selesai') => {
+    setSavedOrders((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, status } : o))
+    );
+    showToast(`Status pesanan #${orderId} diperbarui.`);
+  };
+
+  const handleDeleteOrder = (orderId: string) => {
+    setSavedOrders((prev) => prev.filter((o) => o.id !== orderId));
+    showToast(`Pesanan #${orderId} dihapus dari riwayat.`);
+  };
+
+  const handleClearAllOrders = () => {
+    setSavedOrders([]);
+    try {
+      localStorage.removeItem(STORAGE_KEYS.ORDERS);
+    } catch {
+      // ignore
+    }
+    showToast('Seluruh riwayat pesanan telah dibersihkan.');
   };
 
   // Filtered Menu Items
@@ -417,7 +532,9 @@ export default function App() {
         settings={settings}
         cartCount={cartItemCount}
         cartTotal={cartTotal}
+        orderCount={savedOrders.length}
         onOpenCart={() => setIsCartOpen(true)}
+        onOpenOrders={() => setIsOrdersOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenAddMenu={() => {
           setEditingItem(null);
@@ -428,9 +545,8 @@ export default function App() {
         onExitSellerMode={handleExitSellerMode}
       />
 
-      {/* Hero Banner with Warm Culinary Vibe */}
+      {/* Hero Banner with Dynamic Food Showcase */}
       <section className="bg-gradient-to-b from-amber-700 via-amber-700 to-amber-800 text-white pt-8 sm:pt-10 pb-12 sm:pb-16 px-4 sm:px-6 shadow-inner relative overflow-hidden">
-        {/* Subtle decorative glow */}
         <div className="absolute top-0 right-0 -mr-20 -mt-20 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
 
         <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-12 gap-8 items-center relative z-10">
@@ -510,7 +626,7 @@ export default function App() {
                   )}
                 </h2>
                 <p className="text-xs text-amber-800">
-                  Setiap perubahan menu yang Anda lakukan langsung ter-update di seluruh perangkat pembeli secara real-time.
+                  Perubahan menu dan pengaturan Anda disimpan otomatis di perangkat (localStorage) dan disinkronkan ke server.
                 </p>
               </div>
             </div>
@@ -525,6 +641,13 @@ export default function App() {
               >
                 <Plus className="w-4 h-4" />
                 <span>Tambah Menu</span>
+              </button>
+              <button
+                onClick={() => setIsOrdersOpen(true)}
+                className="px-3.5 py-2 text-xs font-bold text-amber-900 bg-amber-200/80 hover:bg-amber-200 rounded-xl transition flex items-center gap-1.5"
+              >
+                <ClipboardList className="w-3.5 h-3.5" />
+                <span>Daftar Pesanan ({savedOrders.length})</span>
               </button>
               <button
                 onClick={() => setIsSettingsOpen(true)}
@@ -571,6 +694,17 @@ export default function App() {
               )}
             </div>
           </div>
+
+          {/* Quick Button to View Past Orders */}
+          {savedOrders.length > 0 && (
+            <button
+              onClick={() => setIsOrdersOpen(true)}
+              className="text-xs font-bold text-amber-800 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 px-3 py-1.5 rounded-xl border border-amber-200 transition flex items-center gap-1.5"
+            >
+              <ClipboardList className="w-3.5 h-3.5" />
+              <span>Riwayat Pesanan ({savedOrders.length})</span>
+            </button>
+          )}
         </div>
 
         {/* Menu Cards Grid */}
@@ -719,6 +853,19 @@ export default function App() {
         onClearCart={handleClearCart}
         settings={settings}
         onOrderSuccess={handleOrderSuccess}
+      />
+
+      {/* Orders History Modal */}
+      <OrdersModal
+        isOpen={isOrdersOpen}
+        onClose={() => setIsOrdersOpen(false)}
+        orders={savedOrders}
+        onUpdateStatus={showSellerPanel ? handleUpdateOrderStatus : undefined}
+        onDeleteOrder={showSellerPanel ? handleDeleteOrder : undefined}
+        onClearAllOrders={handleClearAllOrders}
+        whatsappNumber={settings.whatsappNumber}
+        shopName={settings.shopName}
+        isOwnerMode={showSellerPanel}
       />
 
       {/* Add / Edit Menu Modal (Seller Only) */}
